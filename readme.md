@@ -1,5 +1,3 @@
-<img src="Cuj2HgW.png" style="height:70px; display:block; margin:60px auto;">
-
 # FJS - Flex JSON Searcher
 
 FJS é uma biblioteca JavaScript que permite fazer buscas em um array de objetos com base em critérios de consulta flexíveis. Com o FJS, você pode realizar buscas complexas e precisas em seus dados usando operadores atômicos e operadores de busca avançados, como busca fuzzy e busca por data.
@@ -9,7 +7,7 @@ FJS é uma biblioteca JavaScript que permite fazer buscas em um array de objetos
 A biblioteca FJS pode ser instalada via npm. Para isso, certifique-se de ter o Node.js instalado em seu ambiente. Em seguida, execute o seguinte comando:
 
 `
-npm install fjs
+npm install flex-json-searcher
 `
 
 
