@@ -28,17 +28,20 @@ const data = [
   { id: 3, name: "Charlie", age: 35, city: "Chicago" },
 ];
 
-// Cria um novo objeto FJS com os dados
-const fjs = new FJS(data);
-
-// Define os critérios de busca
-const query = { age: { $gt: 28 }, city: { $regex: "New" } };
-
-// Realiza a busca
-const result = fjs.search(query);
-
-console.log(result.result); // Resultado da busca
-console.log(result.metadata); // Metadados da busca
+(async() =>{
+  
+  // Cria um novo objeto FJS com os dados
+  const fjs = new FJS(data);
+  
+  // Define os critérios de busca
+  const query = { age: { $gt: 28 }, city: { $regex: "new" } };
+  
+  // Realiza a busca
+  const result = await fjs.search(query);
+  
+  console.log(result.result); // Resultado da busca
+  console.log(result.metadata); // Metadados da busca
+})()
 ```
 
 ## Operadores Atômicos
