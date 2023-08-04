@@ -13,59 +13,52 @@ export interface FJSOptions {
   ignoreAccents?: boolean;
   ignoreCase?: boolean;
   fuzzyThreshold?: number;
+  date?: {
+    operator: string;
+  };
 }
 
-export type FJSOperatorFunction = (a: any, b: any, opts?: FJSOptions) => boolean;
+export type FJSOperatorFunction = (
+  a: any,
+  b: any,
+  opts?: FJSOptions
+) => boolean;
 
-/**
- * Classe que permite fazer buscas em um array de objetos com base em critérios de consulta.
- */
 export class FJS {
   private data: any[];
 
-  /**
-   * Cria um novo objeto FJS com o array de objetos fornecido.
-   * @param data O array de objetos para realizar a busca.
-   */
+  // Definição do objeto de operadores
+  private operators: { [op: string]: FJSOperatorFunction } = {
+    $eq: (a, b, opts) => this.isEqual(a, b, opts),
+    $ne: (a, b, opts) => !this.isEqual(a, b, opts),
+    $gt: (a, b) => this.toNumber(a) > this.toNumber(b),
+    $lt: (a, b) => this.toNumber(a) < this.toNumber(b),
+    $gte: (a, b) => this.toNumber(a) >= this.toNumber(b),
+    $lte: (a, b) => this.toNumber(a) <= this.toNumber(b),
+    $in: (a, b, opts) => this.testIn(a, b, opts),
+    $nin: (a, b, opts) => !this.testIn(a, b, opts),
+    $regex: (a, b, opts) => this.testRegex(a, b, opts),
+    $exists: (a, b) => (a !== undefined) === b,
+    $startsWith: (a, b, opts) => this.testStringStartsWith(a, b, opts),
+    $endsWith: (a, b, opts) => this.testStringEndsWith(a, b, opts),
+    $contains: (a, b, opts) => this.testStringContains(a, b, opts),
+    $size: (a, b) => Array.isArray(a) && a.length === b,
+    $fuzz: (a, b, opts) => this.fuzzySearch(a, b, opts),
+    $date: (a, b, opts) => this.compareDates(a, b, opts),
+  };
+
   constructor(data: any[]) {
     this.data = data;
   }
 
-  /**
-   * Realiza a busca no array de objetos com base nos critérios definidos na consulta.
-   * @param query Objeto que define os critérios de busca. Cada chave é um campo e seu valor é o critério.
-   * @param FJSOptions Opções para a busca.
-   * @returns Um array contendo os objetos que atendem aos critérios da busca, com metadados.
-   */
   public async search(
     query: any,
     FJSOptions: FJSOptions = { ignoreAccents: false, ignoreCase: false }
   ): Promise<FJSSearchResult> {
     const startTime = Date.now();
-    const result = this.data.filter((obj) => {
-      return Object.keys(query).every((key) => {
-        const fieldValue = this.deepValue(obj, key);
-        const searchValue = query[key];
-
-        if (typeof searchValue === "object") {
-          for (const operator in searchValue) {
-            if (
-              !this.checkOperator(
-                fieldValue,
-                operator,
-                searchValue[operator],
-                FJSOptions
-              )
-            ) {
-              return false;
-            }
-          }
-          return true;
-        } else {
-          return this.checkOperator(fieldValue, "$eq", searchValue, FJSOptions);
-        }
-      });
-    });
+    const result = this.data.filter((obj) =>
+      this.matchQuery(obj, query, FJSOptions)
+    );
     const endTime = Date.now();
 
     const metadata = {
@@ -77,108 +70,258 @@ export class FJS {
     return { result, metadata };
   }
 
+  private matchQuery(obj: any, query: any, FJSOptions: FJSOptions): boolean {
+    const isObject = (value: any) =>
+      typeof value === "object" && !Array.isArray(value);
+    const isArray = (value: any) => Array.isArray(value);
+    const isObjectWithOperators = (value: any) =>
+      isObject(value) && !isArray(value);
+
+    const hasMatchingField = (fieldValue: any, searchValue: any): boolean => {
+      if (isObject(fieldValue)) {
+        // Caso o fieldValue seja um objeto, precisamos verificar recursivamente
+        return this.matchQuery(fieldValue, searchValue, FJSOptions);
+      } else if (isObjectWithOperators(searchValue)) {
+        // Aqui tratamos o caso em que o searchValue é um objeto com operadores
+        for (const operator in searchValue) {
+          const searchOperator = searchValue[operator];
+          if (
+            !this.checkOperator(
+              fieldValue,
+              operator,
+              searchOperator,
+              FJSOptions
+            )
+          ) {
+            return false;
+          }
+        }
+        return true;
+      } else {
+        // Demais casos de operadores
+        return this.checkOperator(fieldValue, "$eq", searchValue, FJSOptions);
+      }
+    };
+
+    return Object.keys(query).every((key) => {
+      const fieldValue = this.deepValue(obj, key);
+      const searchValue = query[key];
+      return hasMatchingField(fieldValue, searchValue);
+    });
+  }
+
   private checkOperator(
     fieldValue: any,
     operator: string,
     searchValue: any,
     FJSOptions?: FJSOptions
   ): boolean {
-    const operators: { [op: string]: FJSOperatorFunction } = {
-      $eq: (a, b, opts) => this.isEqual(a, b, opts),
-      $ne: (a, b, opts) => !this.isEqual(a, b, opts),
-      $gt: (a, b) => a > b,
-      $lt: (a, b) => a < b,
-      $gte: (a, b) => a >= b,
-      $lte: (a, b) => a <= b,
-      $in: (a, b) => Array.isArray(b) && b.includes(a),
-      $regex: (a, b, opts) => {
-        if (typeof a === "string" && typeof b === "string") {
-          const regex = new RegExp(b, "i");
-          return regex.test(opts?.ignoreCase ? a.toLowerCase() : a);
-        }
-        return false;
-      },
-      $exists: (a, b) => (a !== undefined) === b,
-      $nin: (a, b) => Array.isArray(b) && !b.includes(a),
-      $startsWith: (a, b, opts) => {
-        if (typeof a === "string" && typeof b === "string") {
-          const regex = new RegExp("^" + this.escapeRegex(b), "i");
-          return regex.test(opts?.ignoreCase ? a.toLowerCase() : a);
-        }
-        return false;
-      },
-      $endsWith: (a, b, opts) => {
-        if (typeof a === "string" && typeof b === "string") {
-          const regex = new RegExp(this.escapeRegex(b) + "$", "i");
-          return regex.test(opts?.ignoreCase ? a.toLowerCase() : a);
-        }
-        return false;
-      },
-      $contains: (a, b, opts) => {
-        if (typeof a === "string" && typeof b === "string") {
-          const regex = new RegExp(this.escapeRegex(b), "i");
-          return regex.test(opts?.ignoreCase ? a.toLowerCase() : a);
-        }
-        return false;
-      },
-      $size: (a, b) => Array.isArray(a) && a.length === b,
-      $fuzz: (a, b, opts) => {
-        if (typeof a === "string" && typeof b === "string") {
-          const threshold =
-            typeof opts?.fuzzyThreshold === "number"
-              ? opts.fuzzyThreshold
-              : 0.8;
-          return this.fuzzySearch(a, b, threshold);
-        }
-        return false;
-      },
-      $date: (a, b, opts) => {
-        if (typeof a === "string" && typeof b === "string") {
-          const dateA = new Date(a);
-          const dateB = new Date(b);
-
-          if (!isNaN(dateA.getTime()) && !isNaN(dateB.getTime())) {
-            return this.compareDates(
-              dateA.getTime(),
-              dateB.getTime(),
-              operator
-            );
-          }
-        } else if (typeof a === "number" && typeof b === "number") {
-          return this.compareDates(a, b, operator);
-        }
-
-        return false;
-      },
-    };
-
-    const FJSOperatorFunction = operators[operator];
+    const FJSOperatorFunction = this.operators[operator];
     return FJSOperatorFunction
       ? FJSOperatorFunction(fieldValue, searchValue, FJSOptions)
       : false;
   }
 
-  private compareDates(
-    dateA: number,
-    dateB: number,
-    operator: string
-  ): boolean {
-    switch (operator) {
-      case "$eq":
-        return dateA === dateB;
-      case "$ne":
-        return dateA !== dateB;
-      case "$gt":
-        return dateA > dateB;
-      case "$lt":
-        return dateA < dateB;
-      case "$gte":
-        return dateA >= dateB;
-      case "$lte":
-        return dateA <= dateB;
-      default:
-        return false; // Operador inválido para datas
+  private testIn(a: any, b: any, opts?: FJSOptions): boolean {
+    const processValue = (value: any) => {
+      const isArrayValue = Array.isArray(value);
+      const isStringValue = typeof value === "string";
+
+      if (isArrayValue) {
+        return value.map((item) => processValue(item));
+      }
+
+      if (isStringValue) {
+        if (opts?.ignoreAccents) {
+          value = diacritics.remove(value);
+        }
+
+        if (opts?.ignoreCase) {
+          value = value.toLowerCase();
+        }
+
+        if (!isNaN(Number(value))) {
+          value = this.toNumber(value);
+        }
+      }
+
+      return value;
+    };
+
+    const normalizedA = processValue(a);
+    const normalizedB = processValue(b);
+
+    const areBothArrays =
+      Array.isArray(normalizedA) && Array.isArray(normalizedB);
+    const areBothNonArrays =
+      !Array.isArray(normalizedA) && !Array.isArray(normalizedB);
+    const isOnlyAArray =
+      Array.isArray(normalizedA) && !Array.isArray(normalizedB);
+    const isOnlyBArray =
+      !Array.isArray(normalizedA) && Array.isArray(normalizedB);
+
+    if (areBothArrays) {
+      // Both a and b are arrays
+      return normalizedA.some((item) =>
+        normalizedB.some((value) =>
+          this.isEqualStringOrNumber(item, value, opts)
+        )
+      );
     }
+
+    if (areBothNonArrays) {
+      // Both a and b are non-arrays
+      return this.isEqualStringOrNumber(normalizedA, normalizedB, opts);
+    }
+
+    if (isOnlyAArray) {
+      // Only a is an array, b is not an array
+      return normalizedA.some((item) =>
+        this.isEqualStringOrNumber(item, normalizedB, opts)
+      );
+    }
+
+    if (isOnlyBArray) {
+      // Only b is an array, a is not an array
+      return normalizedB.some((item) =>
+        this.isEqualStringOrNumber(normalizedA, item, opts)
+      );
+    }
+
+    return false;
+  }
+
+  private isEqualStringOrNumber(
+    value1: any,
+    value2: any,
+    opts?: FJSOptions
+  ): boolean {
+    const isValue1String = typeof value1 === "string";
+    const isValue2String = typeof value2 === "string";
+
+    if (isValue1String && isValue2String) {
+      if (opts?.ignoreCase) {
+        return value1.toLowerCase() === value2.toLowerCase();
+      } else {
+        return value1 === value2;
+      }
+    }
+
+    const numValue1 = this.toNumber(value1);
+    const numValue2 = this.toNumber(value2);
+    return !isNaN(numValue1) && !isNaN(numValue2) && numValue1 === numValue2;
+  }
+
+  private toNumber(value: any): number {
+    const conversionMap: { [type: string]: (value: any) => number } = {
+      number: (val) => val,
+      string: (val) => parseFloat(val),
+    };
+
+    const conversionFunction = conversionMap[typeof value];
+    return conversionFunction ? conversionFunction(value) : NaN;
+  }
+
+  private isEqual(value1: any, value2: any, FJSOptions?: FJSOptions) {
+    if (typeof value1 === "string" && typeof value2 === "string") {
+      let modifiedValue1 = value1;
+      let modifiedValue2 = value2;
+
+      if (FJSOptions?.ignoreAccents) {
+        modifiedValue1 = diacritics.remove(value1);
+        modifiedValue2 = diacritics.remove(value2);
+      }
+      if (FJSOptions?.ignoreCase) {
+        modifiedValue1 = modifiedValue1.toLowerCase();
+        modifiedValue2 = modifiedValue2.toLowerCase();
+      }
+
+      return modifiedValue1 === modifiedValue2;
+    }
+
+    return value1 === value2;
+  }
+
+  private testRegex(a: any, b: any, opts?: FJSOptions) {
+    if (typeof a === "string" && typeof b === "string") {
+      let regexOptions = opts?.ignoreCase ? "i" : "";
+      if (opts?.ignoreAccents) {
+        b = diacritics.remove(b);
+        a = diacritics.remove(a);
+      }
+      const regex = new RegExp(b, regexOptions);
+      return regex.test(a);
+    }
+    return false;
+  }
+
+  private testStringStartsWith(a: any, b: any, opts?: FJSOptions) {
+    if (typeof a === "string" && typeof b === "string") {
+      let regexOptions = opts?.ignoreCase ? "i" : "";
+      if (opts?.ignoreAccents) {
+        b = diacritics.remove(b);
+        a = diacritics.remove(a);
+      }
+      const regex = new RegExp("^" + this.escapeRegex(b), regexOptions);
+      return regex.test(a);
+    }
+    return false;
+  }
+
+  private testStringEndsWith(a: any, b: any, opts?: FJSOptions) {
+    if (typeof a === "string" && typeof b === "string") {
+      let regexOptions = opts?.ignoreCase ? "i" : "";
+      if (opts?.ignoreAccents) {
+        b = diacritics.remove(b);
+        a = diacritics.remove(a);
+      }
+      const regex = new RegExp(this.escapeRegex(b) + "$", regexOptions);
+      return regex.test(a);
+    }
+    return false;
+  }
+
+  private testStringContains(a: any, b: any, opts?: FJSOptions): boolean {
+    const processValue = (value: any) => {
+      if (typeof value === "string") {
+        if (opts?.ignoreAccents) {
+          value = diacritics.remove(value);
+        }
+        if (opts?.ignoreCase) {
+          value = value.toLowerCase();
+        }
+      }
+      return value;
+    };
+
+    const processedA = processValue(a);
+    const processedB = processValue(b);
+
+    if (typeof processedA === "string" && typeof processedB === "string") {
+      const regex = new RegExp(this.escapeRegex(processedB), "i");
+      return regex.test(processedA);
+    }
+
+    return false;
+  }
+
+  private compareDates(dateA: any, dateB: any, opts: FJSOptions = {}): boolean {
+    if (typeof dateA === "string" || typeof dateB === "string") {
+      const dateValueA = new Date(dateA).getTime();
+      const dateValueB = new Date(dateB).getTime();
+
+      if (!isNaN(dateValueA) && !isNaN(dateValueB)) {
+        return this.checkOperator(
+          dateValueA,
+          opts?.date?.operator || "$eq",
+          dateValueB
+        );
+      }
+    } else if (typeof dateA === "number" && typeof dateB === "number") {
+      return this.checkOperator(dateA, opts?.date?.operator || "$eq", dateB);
+    }
+
+    return false;
   }
 
   private deepValue(obj: any, path: string) {
@@ -190,26 +333,12 @@ export class FJS {
     );
   }
 
-  private isEqual(value1: any, value2: any, FJSOptions?: FJSOptions) {
-    if (typeof value1 === "string" && typeof value2 === "string") {
-      if (FJSOptions?.ignoreAccents) {
-        value1 = diacritics.remove(value1);
-        value2 = diacritics.remove(value2);
-      }
-      if (FJSOptions?.ignoreCase) {
-        value1 = value1.toLowerCase();
-        value2 = value2.toLowerCase();
-      }
-    }
-    return value1 === value2;
-  }
-
   private escapeRegex(str: string) {
     return str.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&");
   }
 
-  private fuzzySearch(str: string, query: string, threshold: number): boolean {
-    // Implementação da busca fuzzy
+  private fuzzySearch(str: string, query: string, opts?: FJSOptions): boolean {
+    // Implementação da busca fuzzy...
     const searchValue = diacritics.remove(query.toLowerCase());
     const text = diacritics.remove(str.toLowerCase());
 
@@ -218,7 +347,7 @@ export class FJS {
     }
 
     const score = this.calculateFuzzyScore(text, searchValue);
-    return score >= threshold;
+    return score >= (opts?.fuzzyThreshold ?? 0.8);
   }
 
   private calculateFuzzyScore(text: string, query: string): number {
