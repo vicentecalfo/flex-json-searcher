@@ -1,97 +1,77 @@
-import { FJSSearchResult, FJSOptions, FJSOperatorFunction } from "./FJSTypes";
-import { FJSOperators } from "./FJSOperators";
+import { FJSOperators } from './FJSOperators';
+
+interface QueryResult {
+  results: any[];
+  query: any;
+  timestamp: Date;
+  executionTime: number;
+  totalResults: number;
+  totalItemsScanned: number;
+}
 
 export class FJS {
   private data: any[];
-  private operators: { [op: string]: FJSOperatorFunction };
+  private messages = {
+    invalidQuery: "A query deve ser um objeto válido.",
+    unsupportedQuery: "Operador não suportado na query.",
+  };
 
   constructor(data: any[]) {
     this.data = data;
-    this.operators = FJSOperators;
   }
 
-  public async search(
-    query: any,
-    FJSOptions: FJSOptions = { ignoreAccents: false, ignoreCase: false }
-  ): Promise<FJSSearchResult> {
+  public async search(query: any): Promise<QueryResult> {
+    const queryIsValid = typeof query !== "object" || query === null;
+    if (queryIsValid) throw new Error(this.messages.invalidQuery);
+
+    const operators = FJSOperators;
+
     const startTime = Date.now();
-    const result = this.data.filter((obj) =>
-      this.matchQuery(obj, query, FJSOptions)
-    );
+
+    const filteredData = await this.filterData(query, operators);
+
     const endTime = Date.now();
+    const executionTime = endTime - startTime;
 
-    const metadata = {
-      date: new Date().toISOString(),
-      query,
-      executionTime: endTime - startTime,
+    return {
+      results: filteredData,
+      query: query,
+      timestamp: new Date(),
+      executionTime: executionTime,
+      totalResults: filteredData.length,
+      totalItemsScanned: this.data.length,
     };
-
-    return { result, metadata };
   }
 
-  private matchQuery(obj: any, query: any, FJSOptions: FJSOptions): boolean {
-    const isObject = (value: any) =>
-      typeof value === "object" && !Array.isArray(value);
-    const isArray = (value: any) => Array.isArray(value);
-    const isObjectWithOperators = (value: any) =>
-      isObject(value) && !isArray(value);
+  private async filterData(query: any, operators: any): Promise<any[]> {
+    const filteredData: any[] = [];
 
-    const hasMatchingField = (fieldValue: any, searchValue: any): boolean => {
-      if (isObject(fieldValue)) {
-        return this.matchQuery(fieldValue, searchValue, FJSOptions);
-      } else if (isObjectWithOperators(searchValue)) {
-        for (const operator in searchValue) {
-          const searchOperator = searchValue[operator];
-          if (
-            !this.checkOperator(
-              fieldValue,
-              operator,
-              searchOperator,
-              query,
-              FJSOptions
-            )
-          ) {
-            return false;
+    for (const item of this.data) {
+      let isValid = true;
+
+      for (const field in query) {
+        const operatorObj = query[field];
+
+        for (const operator in operatorObj) {
+          const value = operatorObj[operator];
+
+          if (operator in operators) {
+            isValid = isValid && operators[operator](item[field], value);
+          } else {
+            throw new Error(this.messages.unsupportedQuery);
           }
         }
-        return true;
-      } else {
-        return this.checkOperator(
-          fieldValue,
-          "$eq",
-          searchValue,
-          query,
-          FJSOptions
-        );
+
+        if (!isValid) {
+          break;
+        }
       }
-    };
 
-    return Object.keys(query).every((key) => {
-      const fieldValue = this.deepValue(obj, key);
-      const searchValue = query[key];
-      return hasMatchingField(fieldValue, searchValue);
-    });
-  }
+      if (isValid) {
+        filteredData.push(item);
+      }
+    }
 
-  private checkOperator(
-    fieldValue: any,
-    operator: string,
-    searchValue: any,
-    query?: any,
-    FJSOptions?: FJSOptions
-  ): boolean {
-    const FJSOperatorFunction = this.operators[operator];
-    return FJSOperatorFunction
-      ? FJSOperatorFunction(fieldValue, searchValue, query, FJSOptions)
-      : false;
-  }
-
-  private deepValue(obj: any, path: string) {
-    const keys = path.split(".");
-    return keys.reduce(
-      (value, key) =>
-        value && value[key] !== undefined ? value[key] : undefined,
-      obj
-    );
+    return filteredData;
   }
 }
