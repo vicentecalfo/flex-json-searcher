@@ -1,2 +1,2 @@
-import { FJS } from "./FJS";
+import FJS from "./fjs";
 export { FJS };
